@@ -4,6 +4,10 @@ import numpy as np
 import logging
 import sys
 import os
+import requests
+import json
+from notion_client import Client
+import datetime
 
 from llama_index import (
     NotionPageReader, 
@@ -29,33 +33,50 @@ os.environ['OPENAI_API_KEY'] = st.secrets['OPENAI_API_KEY']
 
 integration_token = st.secrets['NOTION_INTEGRATION_TOKEN']
 database_id = st.secrets['NOTION_DATABASE_ID']
+database_id_nondomain = st.secrets['NOTION_DATABASE_ID_NONDOMAIN']
 
 # #ログの設定
 # logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 # logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
-##########################　notionからテキストデータの取得
-
-page_ids = [
-    '24dd540daff647299bad85343be9e8ca', #家具市場
-    '3feb25502da64fc2a73d7c3392195675', #住宅市場
-    'cf1a9bcdfc1e4eff8338947ead54d49c', #クレーム対応
-    '1e4cf80a32ba4d4ca1e41aaafd684393', #修理
-    '53b4c698eaa84e25944a760ae420533a', #住宅知識
-    'c318641702b04a1092757f44907da883', #知識_その他
-    'ef935bbaa8134bb38e37cae451242f9f', #知識_家具
-    '053b995ddb8f4593aff78a9940a3ffbb', #知識_自社商品
-    '0705701977f949649cb6a2358c915b66', #知識_他社商品
-    '5bbbf477da6d445284b2c64fd4f54c7b', #商品開発時の考え方、アイデア
-    '68f042118592479aba4bf7435288ad71', #人間
-    '75f05d9d37d6456ebfddaa0568c5b1b1', #知識_木
-    '558cc86e2e274c13b5af5e5c648e57d6' #通達
-]
-
-documents = NotionPageReader(integration_token=integration_token).load_data(page_ids=page_ids)
 
 def make_index():
-##########################google driveからテキストファイルの取得
+    ##########################　notionからテキストデータの取得
+    ############　page idの自動取得
+    url = f"https://api.notion.com/v1/search"
+
+    headers = {
+        "accept": "application/json",
+        "Notion-Version": "2022-06-28",
+        "Authorization": f"Bearer {integration_token}"
+    }
+
+    json_data = {
+        # タイトルを検索できる
+        #"query": "ブログ",
+        # 絞り込み(データベースだけに絞るなど)
+        #"filter": {
+        #    "value": "database",
+        #    "property": "object"
+        #},
+        # ソート順
+        "sort": {
+            "direction": "ascending",
+            "timestamp": "last_edited_time"
+        }
+    }
+
+    response = requests.post(url, json=json_data, headers=headers)
+    j_response = response.json()
+    j_response1 = j_response['object']
+    j_response2 = j_response['results']
+
+    page_ids = []
+    for page in j_response2:
+        page_id = page["id"]
+        page_ids.append(page_id)
+
+    documents = NotionPageReader(integration_token=integration_token).load_data(page_ids=page_ids)
 
     ###########################テキストデータの読み込み・index化
 
@@ -65,7 +86,18 @@ def make_index():
     index.storage_context.persist(persist_dir="./storage_context")
 
     ###########################persistでstorage_contextを保存
-    st.write(documents)
+    len_doc = len(documents)
+    nums = list(range(len_doc))
+
+    slct_num = st.selectbox(
+        '番号指定', 
+        nums,
+        key='slct_num')
+
+
+    st.write(documents[slct_num])
+
+
     st.info('index化完了')
 
 def qa_calc():
@@ -88,11 +120,16 @@ def qa_calc():
         st.stop()
     
     #ストレージからindexデータの読み込み
-    storage_context = StorageContext.from_defaults(
-        docstore=SimpleDocumentStore.from_persist_dir(persist_dir="./storage_context"),
-        vector_store=SimpleVectorStore.from_persist_dir(persist_dir="./storage_context"),
-        index_store=SimpleIndexStore.from_persist_dir(persist_dir="./storage_context"),
-    )
+    @st.cache_data(ttl=datetime.timedelta(hours=1))
+    def read_storage():
+        storage_context = StorageContext.from_defaults(
+            docstore=SimpleDocumentStore.from_persist_dir(persist_dir="./storage_context"),
+            vector_store=SimpleVectorStore.from_persist_dir(persist_dir="./storage_context"),
+            index_store=SimpleIndexStore.from_persist_dir(persist_dir="./storage_context"),
+        )
+        return storage_context
+    
+    storage_context = read_storage()
 
     # 実装時点でデフォルトはtext-ada-embedding-002
     #文書テキストを埋め込みベクトルに変換するためのモデル（事前学習済みのニューラルネットワークモデル）
@@ -142,16 +179,34 @@ def qa_calc():
     # index = GPTListIndex.from_documents(documents, service_context=service_context)
     index = GPTVectorStoreIndex.from_documents(documents, service_context=service_context)
 
+    #質問用のQAプロンプトを生成
     QA_PROMPT_TMPL = (
-    "私たちは以下の情報をコンテキスト情報として与えます。 \n"
-    "---------------------\n"
-    "{context_str}"
-    "\n---------------------\n"
-    "あなたはAIとして、この情報をもとに質問を日本語で答えます。前回と同じ回答の場合は同じ回答を行います。: {query_str}\n"
+        "私たちは以下の情報をコンテキスト情報として与えます。 \n"
+        "---------------------\n"
+        "{context_str}"
+        "\n---------------------\n"
+        "あなたはAIとして、この情報をもとに質問を日本語で答えます。前回と同じ回答の場合は同じ回答を行います。: {query_str}\n"
     )
-    QA_PROMPT = QuestionAnswerPrompt(QA_PROMPT_TMPL)
+    qa_prompt = QuestionAnswerPrompt(QA_PROMPT_TMPL)
 
-    query_engine = index.as_query_engine(text_qa_template=QA_PROMPT)
+    ###############################################################tets
+    #回答要求用のプロンプトを生成
+    REFINE_PROMPT = ("元の質問は次のとおりです: {query_str} \n"
+        "既存の回答を提供しました: {existing_answer} \n"
+        "既存の答えを洗練する必要があります \n"
+        "(必要な場合のみ)以下にコンテキストを追加します。 \n"
+        "------------\n"
+        "{context_msg}\n"
+        "------------\n"
+        "新しいコンテキストを考慮して、元の答えをより良く洗練して質問に答えてください。\n"
+        "コンテキストが役に立たない場合は、元の回答と同じものを返します。")
+
+    refine_prompt = RefinePrompt(REFINE_PROMPT)
+
+    ################################################################
+    query_engine = index.as_query_engine(text_qa_template=qa_prompt, refine_template=refine_prompt)
+
+    # query_engine = index.as_query_engine(text_qa_template=QA_PROMPT)
 
     # テンプレを送る
     response = query_engine.query(question)
@@ -174,6 +229,7 @@ def qa_calc():
 
     st.write('sources')
     st.write(response.get_formatted_sources(length=1000))
+
 
 def main():
     # アプリケーション名と対応する関数のマッピング
