@@ -6,7 +6,7 @@ import sys
 import os
 import requests
 import json
-from notion_client import Client
+# from notion_client import Client
 import datetime
 
 from llama_index import (
