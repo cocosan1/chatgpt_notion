@@ -39,8 +39,7 @@ database_id_nondomain = st.secrets['NOTION_DATABASE_ID_NONDOMAIN']
 # logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 # logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
-
-def make_index():
+def make_doc():
     ##########################　notionからテキストデータの取得
     ############　page idの自動取得
     url = f"https://api.notion.com/v1/search"
@@ -71,6 +70,7 @@ def make_index():
     j_response1 = j_response['object']
     j_response2 = j_response['results']
 
+    #page_idの取得
     page_ids = []
     for page in j_response2:
         page_id = page["id"]
@@ -78,27 +78,7 @@ def make_index():
 
     documents = NotionPageReader(integration_token=integration_token).load_data(page_ids=page_ids)
 
-    ###########################テキストデータの読み込み・index化
-
-    # Indexの作成
-    index = GPTVectorStoreIndex.from_documents(documents)
-    # persistでstorage_contextを保存
-    index.storage_context.persist(persist_dir="./storage_context")
-
-    ###########################persistでstorage_contextを保存
-    len_doc = len(documents)
-    nums = list(range(len_doc))
-
-    slct_num = st.selectbox(
-        '番号指定', 
-        nums,
-        key='slct_num')
-
-
-    st.write(documents[slct_num])
-
-
-    st.info('index化完了')
+    return documents
 
 def qa_calc():
     
@@ -231,11 +211,30 @@ def qa_calc():
     st.write(response.get_formatted_sources(length=1000))
 
 
+def make_index():
+    ##############notionからテキストデータの取得
+    documents = make_doc()
+
+    ###########################テキストデータの読み込み・index化
+
+    # Indexの作成
+    index = GPTVectorStoreIndex.from_documents(documents)
+    # persistでstorage_contextを保存
+    index.storage_context.persist(persist_dir="./storage_context")
+
+    st.info('index化完了')
+
+def check_doc():
+    documents = make_doc()
+    st.write(documents)
+
+
 def main():
     # アプリケーション名と対応する関数のマッピング
     apps = {
         'Q&A': qa_calc,
         'txtのindex化': make_index,
+        'documentsの確認': check_doc,
     }
     selected_app_name = st.selectbox(label='項目の選択',
                                                 options=list(apps.keys()))
