@@ -39,8 +39,9 @@ database_id_nondomain = st.secrets['NOTION_DATABASE_ID_NONDOMAIN']
 # logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 # logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
+##########################　notionからテキストデータの取得 関数内で使用
 def make_doc():
-    ##########################　notionからテキストデータの取得
+    
     ############　page idの自動取得
     url = f"https://api.notion.com/v1/search"
 
@@ -79,6 +80,89 @@ def make_doc():
     documents = NotionPageReader(integration_token=integration_token).load_data(page_ids=page_ids)
 
     return documents
+
+def get_nearlynode():
+
+    with st.form('入力'):
+        #質問の入力
+        question = st.text_input('質問を入力してください', key='question')
+        num_node = st.number_input('抽出ノード数を指定してください', value=3, key='num_node')
+
+        submitted = st.form_submit_button('submitted')
+    
+    if submitted:
+
+        #ストレージからindexデータの読み込み
+        @st.cache_data(ttl=datetime.timedelta(hours=1))
+        def read_storage():
+            storage_context = StorageContext.from_defaults(
+                docstore=SimpleDocumentStore.from_persist_dir(persist_dir="./storage_context"),
+                vector_store=SimpleVectorStore.from_persist_dir(persist_dir="./storage_context"),
+                index_store=SimpleIndexStore.from_persist_dir(persist_dir="./storage_context"),
+            )
+            return storage_context
+        
+        storage_context = read_storage()
+
+        # 実装時点でデフォルトはtext-ada-embedding-002
+        #文書テキストを埋め込みベクトルに変換するためのモデル（事前学習済みのニューラルネットワークモデル）
+        embed_model = OpenAIEmbedding()
+
+        #埋め込みモデルによるテキスト埋め込みを生成
+        #埋め込みベクトルを保持するためのリスト
+        docs = []
+        #文書のIDとテキストの対応を保持するための辞書
+        id_to_text_map = {}
+        #文書データを格納しているストレージコンテキストから文書の一覧を取得
+        for i, (_, node) in enumerate(storage_context.docstore.docs.items()):
+            #文書ノード（node）からテキストを取得
+            text = node.get_text()
+            #テキストの埋め込みを生成します
+            docs.append(embed_model.get_text_embedding(text))
+            id_to_text_map[i] = text
+        docs = np.array(docs)
+
+        #text-ada-embedding-002から出力されるベクトル長を指定
+        d = 1536
+        index = faiss.IndexFlatL2(d)
+        #Faissにベクトルを登録
+        index.add(docs)
+
+        # クエリとFaissから取り出すノード数の設定
+        query_text = question
+        k = 3
+
+        # questionのベクトル化
+        query = embed_model.get_text_embedding(query_text)
+        query=np.array([query])
+
+        # Faissからのquestionに近いノードの取り出し2個
+        reader = FaissReader(index)
+        documents = reader.load_data(query=query, id_to_text_map=id_to_text_map, k=k)
+
+        #抽出ノード数の表示
+        st.write(f'count_node: {len(documents)}')
+
+        #ドキュメントオブジェクトからテキストデータを抽出
+        texts = []
+        for document in documents:
+            text = document.text
+            texts.append(text)
+
+        #リスト内のテキストを結合
+        j_text = ''.join(texts)
+
+        #質問用のQAプロンプトを生成
+        QA_PROMPT_TMPL = \
+            f'私たちは以下の情報をコンテキスト情報として与えます。\
+            ---------------------\
+            {j_text}\
+            --------------------\
+            あなたはAIとして、この情報をもとに以下の質問に対し日本語で答えます。前回と同じ回答の場合は同じ回答を行います。\
+            #質問: '
+
+        st.write(QA_PROMPT_TMPL)
+
 
 def qa_calc():
     
@@ -232,6 +316,7 @@ def check_doc():
 def main():
     # アプリケーション名と対応する関数のマッピング
     apps = {
+        '質問に近いノードの抽出': get_nearlynode,
         'Q&A': qa_calc,
         'txtのindex化': make_index,
         'documentsの確認': check_doc,
