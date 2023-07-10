@@ -82,10 +82,12 @@ def make_doc():
     return documents
 
 def get_nearlynode():
+    st.markdown('### ノード収集')
 
     with st.form('入力'):
         #質問の入力
-        question = st.text_input('質問を入力してください', key='question')
+        theme = st.text_input('情報を集めるテーマを入力', key='question')
+        question = theme + 'に関連する情報を集めてください。'
         num_node = st.number_input('抽出ノード数を指定してください', value=3, key='num_node')
 
         submitted = st.form_submit_button('submitted')
@@ -130,7 +132,7 @@ def get_nearlynode():
 
         # クエリとFaissから取り出すノード数の設定
         query_text = question
-        k = 3
+        k = num_node
 
         # questionのベクトル化
         query = embed_model.get_text_embedding(query_text)
@@ -159,9 +161,10 @@ def get_nearlynode():
             {j_text}\
             --------------------\
             あなたはAIとして、この情報をもとに以下の質問に対し日本語で答えます。前回と同じ回答の場合は同じ回答を行います。\
-            #質問: '
+            #質問: {theme}に関する情報を抽出して、テーマ毎にまとめてください。'
 
-        st.write(QA_PROMPT_TMPL)
+        st.write('copy')
+        st.code(QA_PROMPT_TMPL, language='None')
 
 
 def qa_calc():
