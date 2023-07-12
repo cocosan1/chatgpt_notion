@@ -89,7 +89,7 @@ def get_nearlynode():
         #質問の入力
         theme = st.text_input('情報を集めるテーマを入力', key='question')
         question = theme + 'に関連する情報を集めてください。'
-        num_node = st.number_input('抽出ノード数を指定してください', value=3, key='num_node')
+        num_node = st.number_input('抽出ノード数を指定してください', value=8, key='num_node')
 
         submitted = st.form_submit_button('submitted')
     
@@ -125,9 +125,8 @@ def get_nearlynode():
             id_to_text_map[i] = text
         docs = np.array(docs)
 
-        ##################test
+        #全ノード数表示
         st.write(f'count_allnode: {len(docs)}')
-        ##################
 
         #text-ada-embedding-002から出力されるベクトル長を指定
         d = 1536
