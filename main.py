@@ -8,6 +8,7 @@ import requests
 import json
 # from notion_client import Client
 import datetime
+from PIL import Image
 
 from llama_index import (
     NotionPageReader, 
@@ -124,6 +125,10 @@ def get_nearlynode():
             id_to_text_map[i] = text
         docs = np.array(docs)
 
+        ##################test
+        st.write(f'count_allnode: {len(docs)}')
+        ##################
+
         #text-ada-embedding-002から出力されるベクトル長を指定
         d = 1536
         index = faiss.IndexFlatL2(d)
@@ -163,9 +168,30 @@ def get_nearlynode():
             あなたはAIとして、この情報をもとに以下の質問に対し日本語で答えます。前回と同じ回答の場合は同じ回答を行います。\
             #質問: {theme}に関する情報を抽出して、テーマ毎にまとめてください。'
 
-        st.write('copy')
+        #コピー画像
+        image = Image.open('書類複製.jpeg')
+        st.image(image, caption='copy', width=50)
+
         st.code(QA_PROMPT_TMPL, language='None')
 
+
+
+def make_index():
+    ##############notionからテキストデータの取得
+    documents = make_doc()
+
+    ###########################テキストデータの読み込み・index化
+
+    # Indexの作成
+    index = GPTVectorStoreIndex.from_documents(documents)
+    # persistでstorage_contextを保存
+    index.storage_context.persist(persist_dir="./storage_context")
+
+    st.info('index化完了')
+
+def check_doc():
+    documents = make_doc()
+    st.write(documents)
 
 def qa_calc():
     
@@ -298,31 +324,13 @@ def qa_calc():
     st.write(response.get_formatted_sources(length=1000))
 
 
-def make_index():
-    ##############notionからテキストデータの取得
-    documents = make_doc()
-
-    ###########################テキストデータの読み込み・index化
-
-    # Indexの作成
-    index = GPTVectorStoreIndex.from_documents(documents)
-    # persistでstorage_contextを保存
-    index.storage_context.persist(persist_dir="./storage_context")
-
-    st.info('index化完了')
-
-def check_doc():
-    documents = make_doc()
-    st.write(documents)
-
-
 def main():
     # アプリケーション名と対応する関数のマッピング
     apps = {
         '質問に近いノードの抽出': get_nearlynode,
-        'Q&A': qa_calc,
         'txtのindex化': make_index,
         'documentsの確認': check_doc,
+        'Q&A ※基本的に使用しない': qa_calc
     }
     selected_app_name = st.selectbox(label='項目の選択',
                                                 options=list(apps.keys()))
