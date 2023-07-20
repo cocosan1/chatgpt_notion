@@ -83,7 +83,7 @@ def make_doc():
     return documents
 
 def get_nearlynode():
-    st.markdown('### ノード収集')
+    st.markdown('###### ノード収集')
 
     with st.form('入力'):
         #質問の入力
@@ -125,8 +125,6 @@ def get_nearlynode():
             id_to_text_map[i] = text
         docs = np.array(docs)
 
-        #全ノード数表示
-        st.write(f'count_allnode: {len(docs)}')
 
         #text-ada-embedding-002から出力されるベクトル長を指定
         d = 1536
@@ -146,7 +144,7 @@ def get_nearlynode():
         documents = reader.load_data(query=query, id_to_text_map=id_to_text_map, k=k)
 
         #抽出ノード数の表示
-        st.write(f'count_node: {len(documents)}')
+        st.write(f'count_allnode: {len(docs)} / count_node: {len(documents)}')
 
         #ドキュメントオブジェクトからテキストデータを抽出
         texts = []
@@ -180,8 +178,8 @@ def get_nearlynode():
             
 
         #コピー画像
-        image = Image.open('書類複製.jpeg')
-        st.image(image, width=30)
+        link = '[chatgpt](https://chat.openai.com/)'
+        st.markdown(link, unsafe_allow_html=True)
 
         st.code(QA_PROMPT_TMPL, language='None')
 
