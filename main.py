@@ -32,7 +32,9 @@ st.markdown('### chatgpt Q&A from Notion')
 
 os.environ['OPENAI_API_KEY'] = st.secrets['OPENAI_API_KEY']
 
-integration_token = st.secrets['NOTION_INTEGRATION_TOKEN']
+integration_token1 = st.secrets['NOTION_INTEGRATION_TOKEN1']
+integration_token2 = st.secrets['NOTION_INTEGRATION_TOKEN2']
+
 database_id = st.secrets['NOTION_DATABASE_ID']
 database_id_nondomain = st.secrets['NOTION_DATABASE_ID_NONDOMAIN']
 
@@ -41,7 +43,7 @@ database_id_nondomain = st.secrets['NOTION_DATABASE_ID_NONDOMAIN']
 # logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
 ##########################　notionからテキストデータの取得 関数内で使用
-def make_doc():
+def make_doc(notion_token):
     
     ############　page idの自動取得
     url = f"https://api.notion.com/v1/search"
@@ -49,7 +51,7 @@ def make_doc():
     headers = {
         "accept": "application/json",
         "Notion-Version": "2022-06-28",
-        "Authorization": f"Bearer {integration_token}"
+        "Authorization": f"Bearer {notion_token}"
     }
 
     json_data = {
@@ -78,12 +80,12 @@ def make_doc():
         page_id = page["id"]
         page_ids.append(page_id)
 
-    documents = NotionPageReader(integration_token=integration_token).load_data(page_ids=page_ids)
+    documents = NotionPageReader(integration_token=notion_token).load_data(page_ids=page_ids)
 
     return documents
 
-def get_nearlynode():
-    st.markdown('###### ノード収集')
+def get_nearlynode1():
+    st.markdown('###### 1次情報: ノード収集')
 
     with st.form('入力'):
         #質問の入力
@@ -96,12 +98,12 @@ def get_nearlynode():
     if submitted:
 
         #ストレージからindexデータの読み込み
-        @st.cache_data(ttl=datetime.timedelta(hours=1))
+        @st.cache_data(ttl=datetime.timedelta(minutes=30))
         def read_storage():
             storage_context = StorageContext.from_defaults(
-                docstore=SimpleDocumentStore.from_persist_dir(persist_dir="./storage_context"),
-                vector_store=SimpleVectorStore.from_persist_dir(persist_dir="./storage_context"),
-                index_store=SimpleIndexStore.from_persist_dir(persist_dir="./storage_context"),
+                docstore=SimpleDocumentStore.from_persist_dir(persist_dir="./storage_context1"),
+                vector_store=SimpleVectorStore.from_persist_dir(persist_dir="./storage_context1"),
+                index_store=SimpleIndexStore.from_persist_dir(persist_dir="./storage_context1"),
             )
             return storage_context
         
@@ -158,20 +160,19 @@ def get_nearlynode():
         #質問用のQAプロンプトを生成
         QA_PROMPT_TMPL = \
             f'# 命令書: \
-            あなたは優秀なデータ分析官です。\
-            分析の前段階でデータの整理をするところです。\
+            あなたは優秀な文書編集者です。\
             私たちは以下のコンテキスト情報を与えます。\
+            以下の制約を考慮しに対し指示に対して日本語で答えます。\
             ---------------------\
             # コンテキスト情報\
             {j_text}\
             --------------------\
             \
             # 指示\
-            以下の制約を考慮しに対し指示に対して日本語で答えます。\
             上記のコンテキスト情報から{theme}に関する情報を抽出してください。\
             \
             # 制約\
-            - 重複する内容はなるべく具体的な情報が欠損しないようにしながらまとめてください。\
+            - 重複していそうな内容でも極力まとめないでください。\
             - このタスクで最高の結果を出すために、追加の情報が必要な場合は、質問をしてください。\
             \
             # 出力'
@@ -184,22 +185,138 @@ def get_nearlynode():
         st.code(QA_PROMPT_TMPL, language='None')
 
 
-
-def make_index():
+#1次情報cbのindex化
+def make_index1():
     ##############notionからテキストデータの取得
-    documents = make_doc()
+    documents = make_doc(integration_token1)
 
     ###########################テキストデータの読み込み・index化
 
     # Indexの作成
     index = GPTVectorStoreIndex.from_documents(documents)
     # persistでstorage_contextを保存
-    index.storage_context.persist(persist_dir="./storage_context")
+    index.storage_context.persist(persist_dir="./storage_context1")
 
     st.info('index化完了')
 
-def check_doc():
-    documents = make_doc()
+def check_doc1():
+    documents = make_doc(integration_token1)
+    st.write(documents)
+
+def get_nearlynode2():
+    st.markdown('###### 2次情報: ノード収集')
+
+    with st.form('入力'):
+        #質問の入力
+        theme = st.text_input('情報を集めるテーマを入力', key='question')
+        question = theme + 'に関連する情報を集めてください。'
+        num_node = st.number_input('抽出ノード数を指定してください', value=5, key='num_node')
+
+        submitted = st.form_submit_button('submitted')
+    
+    if submitted:
+
+        #ストレージからindexデータの読み込み
+        @st.cache_data(ttl=datetime.timedelta(minutes=30))
+        def read_storage():
+            storage_context = StorageContext.from_defaults(
+                docstore=SimpleDocumentStore.from_persist_dir(persist_dir="./storage_context2"),
+                vector_store=SimpleVectorStore.from_persist_dir(persist_dir="./storage_context2"),
+                index_store=SimpleIndexStore.from_persist_dir(persist_dir="./storage_context2"),
+            )
+            return storage_context
+        
+        storage_context = read_storage()
+
+        # 実装時点でデフォルトはtext-ada-embedding-002
+        #文書テキストを埋め込みベクトルに変換するためのモデル（事前学習済みのニューラルネットワークモデル）
+        embed_model = OpenAIEmbedding()
+
+        #埋め込みモデルによるテキスト埋め込みを生成
+        #埋め込みベクトルを保持するためのリスト
+        docs = []
+        #文書のIDとテキストの対応を保持するための辞書
+        id_to_text_map = {}
+        # 文書データを格納しているストレージコンテキストから文書の一覧を取得
+        for i, (_, node) in enumerate(storage_context.docstore.docs.items()):
+            # 文書ノード（node）からテキストを取得
+            text = node.get_text()
+            # テキストの埋め込みを生成します
+            docs.append(embed_model.get_text_embedding(text))
+            id_to_text_map[i] = text
+        docs = np.array(docs)
+
+
+        #text-ada-embedding-002から出力されるベクトル長を指定
+        d = 1536
+        index = faiss.IndexFlatL2(d)
+        #Faissにベクトルを登録
+        index.add(docs)
+
+        # クエリとFaissから取り出すノード数の設定
+        k = num_node
+
+        # questionのベクトル化
+        query = embed_model.get_text_embedding(question)
+        query=np.array([query])
+
+        # Faissからのquestionに近いノードの取り出し2個
+        reader = FaissReader(index)
+        documents = reader.load_data(query=query, id_to_text_map=id_to_text_map, k=k)
+
+        #抽出ノード数の表示
+        st.write(f'count_allnode: {len(docs)} / count_node: {len(documents)}')
+
+        #ドキュメントオブジェクトからテキストデータを抽出
+        texts = []
+        for document in documents:
+            text = document.text
+            texts.append(text)
+
+        #リスト内のテキストを結合
+        j_text = ''.join(texts)
+
+        #質問用のQAプロンプトを生成
+        QA_PROMPT_TMPL = \
+            f'# 命令書: \
+            あなたは優秀な文書編集者です。\
+            私たちは以下のコンテキスト情報を与えます。\
+            以下の制約を考慮しに対し指示に対して日本語で答えます。\
+            ---------------------\
+            # コンテキスト情報\
+            {j_text}\
+            --------------------\
+            \
+            # 指示\
+            上記のコンテキスト情報から{theme}に関する情報を抽出してください。\
+            \
+            # 制約\
+            - 重複していそうな内容でも極力まとめないでください。\
+            - このタスクで最高の結果を出すために、追加の情報が必要な場合は、質問をしてください。\
+            \
+            # 出力'
+            
+
+        #コピー画像
+        link = '[chatgpt](https://chat.openai.com/)'
+        st.markdown(link, unsafe_allow_html=True)
+        st.code(QA_PROMPT_TMPL, language='None')
+
+def make_index2():
+    ##############notionからテキストデータの取得
+    documents = make_doc(integration_token2)
+
+    ###########################テキストデータの読み込み・index化
+
+    # Indexの作成
+    index = GPTVectorStoreIndex.from_documents(documents)
+    # persistでstorage_contextを保存
+    index.storage_context.persist(persist_dir="./storage_context2")
+
+    st.info('index化完了')
+
+def check_doc2():
+    documents = make_doc(integration_token2)
     st.write(documents)
 
 def qa_calc():
@@ -336,9 +453,12 @@ def qa_calc():
 def main():
     # アプリケーション名と対応する関数のマッピング
     apps = {
-        '質問に近いノードの抽出': get_nearlynode,
-        'txtのindex化': make_index,
-        'documentsの確認': check_doc,
+        '1次情報: 質問に近いノードの抽出': get_nearlynode1,
+        '1次情報: dbのindex化': make_index1,
+        '1次情報: documentsの確認': check_doc1,
+        '2次情報: 質問に近いノードの抽出': get_nearlynode2,
+        '2次情報: dbのindex化': make_index2,
+        '2次情報: documentsの確認': check_doc2,
         'Q&A ※基本的に使用しない': qa_calc
     }
     selected_app_name = st.selectbox(label='項目の選択',

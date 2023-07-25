@@ -1,6 +1,0 @@
-{
-    "object": "error",
-    "status": 400,
-    "code": "validation_error",
-    "message": "path failed validation: path.database_id should be a valid uuid, instead was `\"chatgpt-937b0160628547b58f34f9aaadb19ebd\"`."
-}
